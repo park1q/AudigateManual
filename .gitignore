@@ -17,3 +17,6 @@ node_modules/
 # Draft
 drafts/
 *.draft.mdx
+
+# PDF export (Pandoc)
+build/
