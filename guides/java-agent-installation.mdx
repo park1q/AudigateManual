@@ -1,0 +1,305 @@
+---
+title: "Java Agent 설치"
+description: "WAS에 Audigate Java Agent를 부착하여 실사용자 DB 감사 귀속 설정"
+icon: "code"
+---
+
+**Audigate Java Agent**는 WAS(Tomcat, WebSphere 등)에 부착하는 JVM `-javaagent`입니다.  
+HTTP 요청의 **실제 로그인 사용자**를 식별하고, JDBC 실행 직전 Oracle `E2E_CONTEXT.ECID_UID`(또는 MySQL `AUDITID`)에 주입하여 `AUD$` 감사 레코드에 **사번·세션 단위**로 기록되게 합니다.
+
+<Info>
+  Server·Broker 설치가 선행되어야 합니다. 먼저 [설치 및 환경 설정](/guides/installation)을 완료하세요.
+</Info>
+
+## 시스템 요구사항
+
+| 항목 | 요구사항 |
+| --- | --- |
+| **대상 WAS** | Tomcat, WebSphere 등 Servlet/JDBC 기반 Java WAS |
+| **대상 JDK** | Java 8 이상 (WAS 런타임 JDK) |
+| **Agent 빌드 JDK** | Java 8 (기본 Maven 빌드) 또는 JDK 21 |
+| **대상 DB** | Oracle (권장), MySQL/MariaDB 등 |
+| **Audigate Server** | 감사 정책 배포 및 AUD$ → ES 수집 파이프라인 기동 |
+
+---
+
+## 설치 순서 개요
+
+<Steps>
+  <Step title="1. Agent 빌드">
+    `audigate-java-agent.jar` 및 배포 번들을 생성합니다.
+  </Step>
+  <Step title="2. 배포 번들 설치">
+    JAR + `conf/`를 WAS 서버에 복사합니다.
+  </Step>
+  <Step title="3. JVM 옵션 설정">
+    `-javaagent` 및 `-Daudigate.config`를 WAS에 적용합니다.
+  </Step>
+  <Step title="4. 웹 프론트 연동">
+    `AudigateUtil.js`로 로그인 사용자를 Agent에 등록합니다.
+  </Step>
+  <Step title="5. 검증">
+    Oracle 세션·AUD$·ES에서 실사용자 귀속을 확인합니다.
+  </Step>
+</Steps>
+
+---
+
+## 1. Agent 빌드
+
+### 소스 위치
+
+```
+Audigate Java Agent/
+├── src/main/java/audigate/agent/    # premain, ASM transformer
+├── src/main/java/audigate/xtra/     # HTTP/JDBC hook
+├── client/js/audigateJs/            # AudigateUtil.js (웹 연동)
+├── conf/
+│   ├── audigate.conf
+│   └── audigate-audit-only.conf     # 감사 전용 프리셋 (권장)
+└── build-package.bat                # Windows 일괄 빌드
+```
+
+### 빌드 명령
+
+```bash
+cd "Audigate Java Agent"
+
+# 감사 전용 번들 (권장)
+mvn -Paudit-only clean package
+```
+
+Windows에서는 `build-package.bat`을 사용할 수도 있습니다.
+
+### 산출물
+
+| 경로 | 설명 |
+| --- | --- |
+| `target/audigate-java-agent.jar` | 단일 shade JAR (`Premain-Class: audigate.agent.JavaAgent`) |
+| `target/audigate-agent/` | 배포 번들 (JAR + conf + AudigateUtil.js) |
+| `target/audigate-agent.zip` | 배포 번들 압축 |
+
+**배포 번들 구조:**
+
+```
+audigate-agent/
+├── audigate-java-agent.jar
+├── conf/
+│   └── audigate.conf          # audit-only 프리셋이 복사됨
+├── client/js/audigateJs/
+│   └── AudigateUtil.js
+├── dump/
+├── plugin/
+└── NOTICE.txt
+```
+
+<Tip>
+  운영 환경에서는 `-Paudit-only` 빌드를 권장합니다. APM·UDP·Collector 기능이 OFF된 **감사 전용** 설정이 포함됩니다.
+</Tip>
+
+---
+
+## 2. WAS 서버에 배포
+
+배포 번들을 WAS 서버에 복사합니다.
+
+```bash
+# Linux 예시
+sudo mkdir -p /opt/audigate-agent
+sudo cp -r target/audigate-agent/* /opt/audigate-agent/
+```
+
+| 파일 | 용도 |
+| --- | --- |
+| `audigate-java-agent.jar` | JVM `-javaagent` 대상 |
+| `conf/audigate.conf` | Agent 동작 설정 |
+| `client/js/audigateJs/AudigateUtil.js` | 웹 앱 Challenge-Response 연동 |
+
+<Warning>
+  **Audigate Server**의 `deploy/conf/audigate.conf`(YAML)와 **Java Agent**의 `conf/audigate.conf`(key=value)는 형식·용도가 다릅니다. 혼동하지 마세요.
+</Warning>
+
+---
+
+## 3. JVM 옵션 설정
+
+### 기본 JVM 옵션
+
+```text
+-javaagent:/opt/audigate-agent/audigate-java-agent.jar
+-Daudigate.config=/opt/audigate-agent/conf/audigate.conf
+```
+
+`-Daudigate.config`를 생략하면 JAR 위치 기준 `conf/audigate.conf`를 자동으로 읽습니다.
+
+### Tomcat (Linux)
+
+`$CATALINA_HOME/bin/setenv.sh`:
+
+```bash
+export JAVA_OPTS="$JAVA_OPTS -javaagent:/opt/audigate-agent/audigate-java-agent.jar"
+export JAVA_OPTS="$JAVA_OPTS -Daudigate.config=/opt/audigate-agent/conf/audigate.conf"
+```
+
+### Tomcat (Windows)
+
+`%CATALINA_HOME%\bin\setenv.bat`:
+
+```bat
+set "CATALINA_OPTS=%CATALINA_OPTS% -javaagent:C:\audigate-agent\audigate-java-agent.jar"
+set "CATALINA_OPTS=%CATALINA_OPTS% -Daudigate.config=C:\audigate-agent\conf\audigate.conf"
+```
+
+### Cargo 내장 Tomcat (개발 환경)
+
+Cargo embedded Tomcat은 **Maven JVM**을 공유하므로 `MAVEN_OPTS`에 `-javaagent`를 지정해야 합니다.
+
+```bash
+export MAVEN_OPTS="-javaagent:/path/to/audigate-java-agent.jar -Daudigate.config=/path/to/audigate-audit-only.conf"
+mvn cargo:run
+```
+
+---
+
+## 4. Agent 설정 (audigate.conf)
+
+감사 전용 프리셋의 핵심 항목입니다 (`conf/audigate-audit-only.conf`).
+
+```properties
+# 객체 식별
+obj_type=tomcat
+obj_name=audigate-app
+
+# APM / Collector OFF (감사 전용)
+_net_udp_send_enabled=false
+counter_enabled=false
+
+# HTTP 사용자 식별
+trace_user_cookie_path=/
+trace_user_session_key=JSESSIONID
+_hook_serivce_enabled=true
+
+# DB 감사 식별자 주입 (핵심)
+_profile_sql_audit_db_setting_enabled=true
+_profile_sql_audit_oracle_enabled=true
+_audit_oracle_key=E2E_CONTEXT.ECID_UID
+_audit_mysql_key=AUDITID
+_hook_dbsql_enabled=true
+_hook_dbconn_enabled=true
+```
+
+| 설정 | 설명 |
+| --- | --- |
+| `obj_name` | Agent 인스턴스 이름 (모니터링·로그 식별) |
+| `_audit_oracle_key` | Oracle `dbms_session.set_context` 키 |
+| `_hook_dbsql_enabled` | JDBC Statement 후킹 활성화 |
+| `trace_user_session_key` | HTTP 세션 쿠키 키 (기본 `JSESSIONID`) |
+
+수동 배포 시 `audigate-audit-only.conf`를 `conf/audigate.conf`로 복사합니다.
+
+---
+
+## 5. 웹 프론트 연동 (AudigateUtil.js)
+
+Agent가 HTTP 세션에서 사용자를 식별하려면, 웹 앱 로그인 성공 후 **Challenge-Response 쿠키**를 등록해야 합니다.
+
+### 스크립트 포함
+
+빌드 산출물의 `AudigateUtil.js`를 WAS 정적 리소스 경로에 복사합니다.
+
+```html
+<script src="/js/audigateJs/AudigateUtil.js"></script>
+```
+
+### 로그인 후 호출
+
+```javascript
+// 로그인 성공 직후 — userId는 사번 또는 로그인 ID
+AudigateUtil.registMe(userId);
+```
+
+### 동작 흐름
+
+1. Agent가 HTTP 응답에 `_audhash` 쿠키를 발급
+2. `registMe(userId)` 호출 시 `_auduuid` 쿠키 생성 (Challenge-Response)
+3. JDBC Statement 최초 사용 시 Agent가 `E2E_CONTEXT.ECID_UID`에 `{userId} {sessionId}` 주입
+4. Oracle `AUD$`에 실사용자 식별자가 기록됨
+
+<Check>
+  브라우저 DevTools → Application → Cookies에서 `_audhash`, `_auduuid` 쿠키가 보이면 프론트 연동이 정상입니다.
+</Check>
+
+---
+
+## 6. 설치 검증
+
+### Oracle 세션 확인
+
+WAS에서 업무 SQL 실행 직후:
+
+```sql
+SELECT SYS_CONTEXT('E2E_CONTEXT', 'ECID_UID') AS ecid_uid
+  FROM dual;
+
+SELECT username, audsid
+  FROM v$session
+ WHERE audsid = USERENV('SESSIONID');
+```
+
+`ECID_UID`에 `{사번} {세션ID}` 형식 값이 표시되어야 합니다.
+
+### AUD$ 감사 확인
+
+```sql
+SELECT auditid, action_name, obj$name, ntimestamp#
+  FROM sys.aud$
+ WHERE ntimestamp# > systimestamp - INTERVAL '5' MINUTE
+ ORDER BY ntimestamp# DESC
+ FETCH FIRST 10 ROWS ONLY;
+```
+
+`AUDITID`에 실사용자 식별자가 기록되어야 합니다 (공통 DB 계정명만 보이면 Agent 미부착 또는 `registMe` 미호출).
+
+### Elasticsearch 확인
+
+**Server → 감사 로그 분석**에서 `enc_identity` 또는 `auditid`로 검색합니다.
+
+| 확인 항목 | 기대 결과 |
+| --- | --- |
+| `enc_identity` | 로그인 사용자 ID |
+| `obj_name` | 조회한 테이블명 |
+| 접속 경로 | WAS (Agent 경유) |
+
+---
+
+## 문제 해결
+
+| 증상 | 원인 | 조치 |
+| --- | --- | --- |
+| AUD$에 공통 DB 계정만 기록 | Agent 미부착 | JVM 옵션 `-javaagent` 확인, WAS 재기동 |
+| `_audhash` 쿠키 없음 | Agent 미부착 또는 hook 비활성 | `audigate.conf`의 `_hook_serivce_enabled=true` 확인 |
+| `registMe` 후에도 귀속 안 됨 | 쿠키 path 불일치 | `trace_user_cookie_path=/` 설정, `AudigateUtil.COOKIE_PATH` 확인 |
+| ES에 감사 없음 | AUDIT 정책 미배포 | Server Audit Builder에서 대상 오브젝트 정책 생성 |
+| Cargo에서 Agent 동작 안 함 | JVM 옵션 위치 오류 | `MAVEN_OPTS`에 `-javaagent` 지정 (cargo.jvmargs 아님) |
+
+---
+
+## 참고: Java WAS Tester
+
+개발·검증용 테스트 WAS가 `Java WAS Tester` 프로젝트에 포함되어 있습니다.
+
+```powershell
+cd "Java WAS Tester"
+copy conf\tester.conf.example conf\tester.conf
+mvn clean package cargo:run
+```
+
+브라우저: `http://localhost:9080/tester/` — Agent 연동·SQL 콘솔·`registMe` 동작을 확인할 수 있습니다.
+
+<Card title="설치 및 환경 설정" icon="download" href="/guides/installation">
+  Audigate Server, Elasticsearch, AG$BROKER 설치를 먼저 완료하세요.
+</Card>
+
+<Card title="빠른 시작" icon="rocket" href="/quickstart">
+  Track B — WAS + Agent 통합 감사 시나리오를 따라해 보세요.
+</Card>

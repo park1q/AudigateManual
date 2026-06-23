@@ -1,0 +1,73 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "Audigate Manual",
+  "description": "Audigate 제품 사용 메뉴얼",
+  "colors": {
+    "primary": "#2563EB",
+    "light": "#3B82F6",
+    "dark": "#1D4ED8"
+  },
+  "favicon": "/favicon.svg",
+  "logo": {
+    "light": "/logo/light.svg",
+    "dark": "/logo/dark.svg"
+  },
+  "navigation": {
+    "pages": [
+      {
+        "group": "시작하기",
+        "pages": [
+          "index",
+          "quickstart",
+          "guides/installation",
+          "guides/java-agent-installation",
+          "guides/client-installation"
+        ]
+      },
+      {
+        "group": "사용자 가이드",
+        "pages": [
+          "guides/basic-usage",
+          "guides/dashboard",
+          "guides/reports"
+        ]
+      },
+      {
+        "group": "관리자 가이드",
+        "pages": [
+          "admin/overview",
+          "admin/user-management",
+          "admin/settings"
+        ]
+      },
+      {
+        "group": "FAQ & 지원",
+        "pages": [
+          "troubleshooting/faq",
+          "troubleshooting/common-issues"
+        ]
+      }
+    ]
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "지원 문의",
+        "href": "mailto:support@audigate.com"
+      }
+    ]
+  },
+  "contextual": {
+    "options": [
+      "copy",
+      "view",
+      "chatgpt",
+      "claude",
+      "cursor"
+    ]
+  },
+  "footer": {
+    "socials": {}
+  }
+}

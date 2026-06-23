@@ -1,0 +1,19 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Node (로컬 도구 사용 시)
+node_modules/
+
+# Mintlify
+.mintlify/
+
+# Draft
+drafts/
+*.draft.mdx

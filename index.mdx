@@ -1,0 +1,100 @@
+---
+title: "Audigate 소개"
+description: "Oracle DB 감사(Audit)와 인스턴트 접근제어(Gate)를 하나로 통합하는 데이터베이스 보안 솔루션"
+icon: "book-open"
+---
+
+**AUDIGATE** (*Automatic Unified Database Instant Gate*)는 Oracle 운영 DB에서 **「승인받은 사람만, 승인받은 최소 권한만」** 실행하고, WAS·DB 직접 접속 모두 **「누가·무엇을·승인 범위 안에서」** 했는지 **한 콘솔에서 증명**하는 통합 데이터베이스 보안 솔루션입니다.
+
+> **Approve minimum. Audit everyone. One console.**
+
+## 이 솔루션이 필요한 이유
+
+최근 개인정보 유출 사고에서 반복되는 문제는 개별 해킹 기법보다 **DB 거버넌스 공백**에 가깝습니다.
+
+| 유형 | 대표적 문제 |
+| --- | --- |
+| **WAS 경유 조회** | DB 감사에는 공통 DB 계정만 기록되어 **실사용자 추적 불가** |
+| **DB 직접 접속** | DBA·운영 인력에게 **상시 과다 권한(GRANT)** 이 유지됨 |
+| **승인·실행·감사 분리** | PAM 티켓, DAM 로그, DBA GRANT가 **별도 시스템**에 흩어짐 |
+| **사후 대응** | 사고 후 로그 수집·수동 상관분석에 **수주~수개월** 소요 |
+
+AUDIGATE는 위 공백을 **Oracle-native** 방식으로 메웁니다. PAM은 ‘접속’을 열어주고, DAM은 ‘관찰’에 가깝습니다. AUDIGATE는 **승인 단위 최소 Role을 Oracle에 materialize**하고, WAS 경유 SQL까지 **실사용자를 DB 표준 감사(AUD$)에 귀속**합니다.
+
+## 두 가지 핵심 기능
+
+<CardGroup cols={2}>
+  <Card title="Instant Gate" icon="shield-check" href="/guides/basic-usage">
+  **인스턴트 접근제어** — 상시 GRANT 없이, 오브젝트·권한·기한 단위로 권한을 요청·승인합니다. 승인 시 AP-Role만 동적 생성되고, `apply_my_roles` 실행 후 **승인 범위 밖 SQL은 DB 레벨에서 거부**됩니다.
+  </Card>
+  <Card title="Unified Audit" icon="magnifying-glass-chart" href="/guides/dashboard">
+  **통합 감사** — Oracle `AUD$` 감사 로그와 Gate 메타데이터를 **Elasticsearch**에 통합 저장합니다. WAS·직접 접속을 **동일 사용자·동일 오브젝트**로 한 화면에서 검색·분석합니다.
+  </Card>
+</CardGroup>
+
+## 5대 핵심 역량
+
+| ID | 역량 | 핵심 메커니즘 | 효과 |
+| --- | --- | --- | --- |
+| **P1** | 실사용자 WAS 감사 | Java Agent → JDBC 시 `E2E_CONTEXT` 주입 → AUD$ `ecid` 기록 | 공통 DB 계정 감사를 **로그인 사용자·세션 단위**로 귀속 |
+| **P2** | Gate Role JIT 최소권한 | 승인·기한·오브젝트 단위 AP-Role 동적 생성 → `apply_my_roles` | **상시 GRANT 제거**, 승인 범위 밖 SQL DB 레벨 거부 |
+| **P3** | 통합 교차분석 | 승인 메타 + 감사 로그를 **단일 Elasticsearch**에서 상관 검색 | “승인 없이 실행된 SELECT” **수동 대조 → 수시간** |
+| **P4** | 오브젝트 이상행위 탐지 | 미귀속 접근·승인 범위 초과·기한 만료 후 접속·대량 READ | **라이브 대시보드·알람**으로 조기 탐지 |
+| **P5** | TLS 환경 DBMS-native 통제 | 패킷 스니핑 없이 **DB 엔진·세션 컨텍스트·AUD$** 기반 | 암호화 DB 통신 환경에서도 **네트워크 DAM 보완** |
+
+## 제품 구성
+
+| 구성요소 | 역할 |
+| --- | --- |
+| **Audigate Server** | Gate/Audit 중앙 관리, REST API, 웹 콘솔, ES 연동, 라이브 대시보드 |
+| **Audigate Client** | 권한 요청·승인·`apply_my_roles` 인증키 스크립트 발급 (React + Tauri 데스크톱) |
+| **Java Agent** | WAS `-javaagent` — 실사용자 → DB 세션 식별자 주입 (소스 수정 최소) |
+| **AUDIGATE$BROKER** | Oracle 패키지 — authKey·IP·OS·터미널 검증, 최소 Role 활성화 |
+| **Elasticsearch** | 감사 로그·AP-Role 메타·이력 통합 검색 |
+
+<Info>
+  AUDIGATE는 기존 PAM·SIEM을 **대체**하기보다, Oracle 운영 DB의 **「권한 JIT + 실사용자 감사 + 승인 대비 행위 증명」** 레이어로 동작합니다.
+</Info>
+
+## 주요 사용자
+
+| 역할 | 주로 사용하는 기능 |
+| --- | --- |
+| **CISO · 정보보호** | 통합 거버넌스 뷰, 이상행위 알람, 귀속률 KPI |
+| **DBA** | DB 서비스 관리, 감사 정책(Audit Builder), Gate Role 관리 |
+| **내부감사 · ITGC** | 감사 로그 분석, 승인↔실행 교차 검증 |
+| **일반 사용자 · 승인자** | Client 권한 요청·결재, 인증키 스크립트 실행 |
+
+## 메뉴얼 안내
+
+이 메뉴얼은 설치부터 일상적인 사용, 관리자 설정까지 단계별로 안내합니다.
+
+<CardGroup cols={2}>
+  <Card title="빠른 시작" icon="rocket" href="/quickstart">
+    권한 요청 → 승인 → Role 활성화까지 3단계로 시작합니다.
+  </Card>
+  <Card title="설치 가이드" icon="download" href="/guides/installation">
+    Server, Agent, Broker, Elasticsearch 설치 방법을 확인하세요.
+  </Card>
+  <Card title="기본 사용법" icon="circle-play" href="/guides/basic-usage">
+    웹 콘솔·Client의 주요 화면과 작업 흐름을 익히세요.
+  </Card>
+  <Card title="대시보드" icon="chart-line" href="/guides/dashboard">
+    통합 Overview, Audit Live, Gate Live 대시보드를 안내합니다.
+  </Card>
+  <Card title="관리자 가이드" icon="users-gear" href="/admin/overview">
+    DB 서비스, 사용자, 결재선, 감사 정책 설정을 다룹니다.
+  </Card>
+  <Card title="FAQ" icon="circle-question" href="/troubleshooting/faq">
+    자주 묻는 질문과 문제 해결 방법을 확인하세요.
+  </Card>
+</CardGroup>
+
+## 메뉴얼 구성
+
+| 섹션 | 설명 |
+| --- | --- |
+| **시작하기** | 설치, 초기 설정, 빠른 시작 |
+| **사용자 가이드** | Client·웹 콘솔 기능, 대시보드, 보고서 |
+| **관리자 가이드** | DB 서비스, Gate/Audit 설정, 사용자·결재선 관리 |
+| **FAQ & 지원** | 문제 해결 및 문의 안내 |

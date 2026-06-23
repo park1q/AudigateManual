@@ -1,0 +1,423 @@
+---
+title: "설치 및 환경 설정"
+description: "Audigate Server — Tomcat, Elasticsearch, AG$BROKER 스키마 설치 가이드"
+icon: "download"
+---
+
+이 문서는 **Audigate Server** 온프레미스 설치 절차를 안내합니다.  
+설치 순서는 **Elasticsearch → Oracle Broker(AG$BROKER) → Tomcat(WAR) → 웹 초기 설정 → DB 서비스 등록** 입니다.
+
+<Info>
+  Oracle DB 연결 정보는 `audigate.conf`에 저장하지 않습니다. Broker 설치 후 **웹 콘솔 → 디비 서비스 관리자**에서 등록하며, 메타데이터는 Elasticsearch에 저장됩니다.
+</Info>
+
+## 시스템 요구사항
+
+| 구분 | 요구사항 |
+| --- | --- |
+| **JDK** | 21 (Server WAR 빌드·실행) |
+| **Tomcat** | 10.1.x (Jakarta EE / Servlet 6) |
+| **Elasticsearch** | 9.4.x (Java API Client 9.4.0과 호환) |
+| **Oracle** | EE 11g 이상 **또는** SE/XE 19c 이상 |
+| **OS** | Linux 권장 (Windows 개발 환경 지원) |
+
+### 서버 권장 사양
+
+| 항목 | 최소 | 권장 |
+| --- | --- | --- |
+| CPU | 4 Core | 8 Core 이상 |
+| 메모리 | 16 GB | 32 GB 이상 (ES 별도 서버 시 Server 16 GB) |
+| 디스크 | 100 GB SSD | 500 GB SSD 이상 (감사 로그 보관 기간에 따라 확장) |
+
+---
+
+## 설치 순서 개요
+
+<Steps>
+  <Step title="1. Elasticsearch 기동">
+    감사 로그·Gate 메타·설정 정보 저장소를 준비합니다.
+  </Step>
+  <Step title="2. AG$BROKER 스키마 설치">
+    Oracle PDB에 Broker 사용자·패키지를 설치합니다.
+  </Step>
+  <Step title="3. Audigate Server (Tomcat) 배포">
+    WAR 빌드 후 Tomcat에 배치하고 기동합니다.
+  </Step>
+  <Step title="4. audigate.conf 설정">
+    Elasticsearch 연결 정보를 구성합니다 (또는 웹 설치 마법사 사용).
+  </Step>
+  <Step title="5. 웹 초기 설정">
+    관리자 계정 생성 및 ES 인덱스·템플릿 초기화.
+  </Step>
+  <Step title="6. DB 서비스 등록">
+    웹 콘솔에서 Oracle 인스턴스·Broker 계정을 연결합니다.
+  </Step>
+</Steps>
+
+---
+
+## 1. Elasticsearch 설치
+
+Audigate Server는 감사 로그(`oracle_aud-*`), AP-Role 메타, 사용자·설정 정보를 **Elasticsearch**에 저장합니다.
+
+### 버전
+
+- **권장**: Elasticsearch **9.4.x**
+- Server는 ES Java API Client **9.4.0**을 사용합니다 (9.4.0 클라이언트 ↔ 9.4.1 서버 호환).
+
+### 기본 구성
+
+| 항목 | 기본값 | 비고 |
+| --- | --- | --- |
+| HTTP 포트 | `9200` | `audigate.conf`의 `elasticServer.port` |
+| 프로토콜 | `https` | x-pack 보안 활성화 시 |
+| 인증 | `elastic` 사용자 | 설치 시 생성된 비밀번호 사용 |
+
+### 설치 예시 (단일 노드, Linux)
+
+```bash
+# Elasticsearch 9.4.x 공식 패키지 또는 tar.gz 설치 후
+# elasticsearch.yml 최소 설정 예시
+
+cluster.name: audigate-es
+node.name: node-01
+network.host: 0.0.0.0
+http.port: 9200
+
+# x-pack 보안 (운영 환경 권장)
+xpack.security.enabled: true
+xpack.security.http.ssl.enabled: true
+```
+
+### 기동 확인
+
+```bash
+# HTTP (보안 비활성화 시)
+curl http://localhost:9200
+
+# HTTPS + 인증 (운영)
+curl -k -u elastic:<password> https://localhost:9200
+```
+
+<Check>
+  `cluster_name`, `version.number`이 응답되면 ES가 정상 기동된 것입니다.
+</Check>
+
+<Tip>
+  감사 로그는 일별 인덱스(`oracle_aud-{service}-{YYYYMMDD}`)로 적재됩니다. 보관 기간·디스크 용량은 운영 정책에 맞게 ILM(인덱스 수명 주기)을 설정하세요.
+</Tip>
+
+---
+
+## 2. AG$BROKER 스키마 설치 (Oracle)
+
+**Instant Gate**의 핵심인 Oracle Broker 패키지를 대상 DB의 **애플리케이션 PDB**에 설치합니다.
+
+### 설치 스크립트
+
+| Oracle 에디션 | 스크립트 경로 |
+| --- | --- |
+| **EE** (Enterprise Edition, 11g+) | `AudigateServer/deploy/conf/CREATE_AUDIGATE_BROKER.sql` |
+| **SE / XE** (19c+) | `AudigateServer/deploy/conf/CREATE_AUDIGATE_BROKER_SE.sql` |
+| SE 패키지 패치 | `AudigateServer/deploy/conf/deploy_se_packages.sql` |
+
+### 사전 조건
+
+- **SYS AS SYSDBA** 권한으로 접속
+- **12c+ CDB/PDB**: 반드시 **애플리케이션 PDB**에 연결 (`CDB$ROOT`에서 실행 금지)
+- Broker 전용 **테이블스페이스** 권장
+- 스키마명 예: `AG$BROKER01` (설치 시 입력, `$` 포함 가능)
+
+### EE 설치 (CREATE_AUDIGATE_BROKER.sql)
+
+```bash
+# PDB에 SYSDBA로 접속
+sqlplus sys/<password>@<host>:1521/<pdb_service> as sysdba
+
+SQL> @CREATE_AUDIGATE_BROKER.sql
+```
+
+스크립트 실행 중 프롬프트에 따라 입력합니다.
+
+| 입력 항목 | 예시 |
+| --- | --- |
+| Broker 스키마명 | `AG$BROKER01` |
+| Broker 비밀번호 | (안전한 비밀번호) |
+| 기본 테이블스페이스 | 전용 TBS 번호 선택 |
+| 임시 테이블스페이스 | TEMP TBS 번호 선택 |
+
+### SE / XE 설치 (CREATE_AUDIGATE_BROKER_SE.sql)
+
+```bash
+# 21c XE 예: XEPDB1에 접속
+sqlplus sys/<password>@localhost:1521/xepdb1 as sysdba
+
+SQL> @CREATE_AUDIGATE_BROKER_SE.sql
+```
+
+<Warning>
+  EE와 SE/XE는 Role 활성화 패키지가 다릅니다.
+  - **EE**: `ap_role_util.apply_my_roles`
+  - **SE/XE**: `ap_role_util_se.apply_my_roles`
+</Warning>
+
+### 설치되는 주요 객체
+
+| 객체 | 역할 |
+| --- | --- |
+| `ROLE_AUDIGATE_CLIENT` | Broker가 AP-Role을 관리하기 위한 Oracle Role (SYS 소유) |
+| `GRANTED_ROLES` | 승인·활성화된 AP-Role 메타 테이블 |
+| `PARAMETERS` | Broker 파라미터 테이블 |
+| `AUDIGATE_UTIL` | Broker 유틸리티 패키지 |
+| `AP_ROLE_UTIL` (EE) / `AP_ROLE_UTIL_SE` (SE) | authKey·IP·OS 검증 후 최소 Role 활성화 |
+
+### 설치 확인
+
+```sql
+-- Broker 스키마로 접속 후
+SELECT object_name, object_type, status
+  FROM user_objects
+ WHERE object_type IN ('PACKAGE', 'TABLE')
+ ORDER BY object_type, object_name;
+
+-- EE: 패키지 BODY 컴파일 상태 확인
+SELECT object_name, status FROM user_objects
+ WHERE object_name IN ('AP_ROLE_UTIL', 'AUDIGATE_UTIL');
+```
+
+<Check>
+  `GRANTED_ROLES`, `PARAMETERS` 테이블과 `AP_ROLE_UTIL` 패키지가 `VALID`이면 Broker 설치가 완료된 것입니다.
+</Check>
+
+### Role 활성화 테스트 (설치 후)
+
+```sql
+-- EE 환경
+BEGIN "AG$BROKER01".ap_role_util.apply_my_roles('<memberId>', '<authKey>'); END;
+/
+
+-- SE/XE 환경
+BEGIN "AG$BROKER01".ap_role_util_se.apply_my_roles('<memberId>', '<authKey>'); END;
+/
+```
+
+---
+
+## 3. Audigate Server (Tomcat) 배포
+
+### 디렉터리 구조
+
+Audigate **홈 디렉터리**(`catalina.home` / `AUDIGATE_HOME`)는 `deploy/` 폴더입니다.
+
+```
+AudigateServer/
+├── deploy/
+│   ├── conf/
+│   │   ├── audigate.conf          # 운영 설정 (YAML)
+│   │   ├── audigate.conf.example  # 설정 템플릿
+│   │   ├── CREATE_AUDIGATE_BROKER.sql
+│   │   └── CREATE_AUDIGATE_BROKER_SE.sql
+│   ├── tomcat/
+│   │   ├── run-cargo.bat          # 개발: 빌드 + Cargo 기동
+│   │   ├── start-cargo.bat        # 개발: 기존 WAR로 기동
+│   │   ├── setenv.example.bat     # 운영 Tomcat JVM 옵션 (Windows)
+│   │   └── setenv.example.sh      # 운영 Tomcat JVM 옵션 (Linux)
+│   └── logs/
+│       └── audigate.log
+└── target/
+    └── audigate-server.war
+```
+
+### WAR 빌드
+
+```bash
+cd AudigateServer
+mvn clean package -DskipTests
+```
+
+산출물: `target/audigate-server.war`
+
+### 개발 환경 (Cargo 내장 Tomcat)
+
+```bash
+# Windows
+deploy\tomcat\run-cargo.bat
+
+# 또는 직접 Maven 실행
+mvn clean package -DskipTests cargo:run
+```
+
+| 포트 | 용도 | 기본값 |
+| --- | --- | --- |
+| HTTP | 웹 콘솔·REST API | **9071** |
+| RMI | Cargo 관리 | 9171 |
+| AJP | (선택) | 9271 |
+
+브라우저: `http://localhost:9071/`
+
+### 운영 환경 (외부 Tomcat 10.1)
+
+<Steps>
+  <Step title="JDK 21 설치">
+    `JAVA_HOME`을 JDK 21로 설정합니다.
+  </Step>
+  <Step title="WAR 배치">
+    `audigate-server.war`를 Tomcat `webapps/`에 복사합니다.
+  </Step>
+  <Step title="setenv 설정">
+    `deploy/tomcat/setenv.example.bat`(또는 `.sh`)를 `%CATALINA_HOME%/bin/setenv.bat`에 복사·수정합니다.
+  </Step>
+  <Step title="홈 디렉터리 지정">
+    `deploy/` 폴더를 Audigate 홈으로 사용하거나, `conf/`·`logs/`를 동일 구조로 배치합니다.
+  </Step>
+  <Step title="Tomcat 기동">
+    `catalina.sh start` (Linux) 또는 `catalina.bat start` (Windows)
+  </Step>
+</Steps>
+
+**운영 Tomcat JVM 옵션 예시** (`setenv.bat`):
+
+```bat
+set "CATALINA_OPTS=%CATALINA_OPTS% -Dfile.encoding=UTF-8 -Djava.awt.headless=true"
+set "CATALINA_OPTS=%CATALINA_OPTS% -Daudigate.profile=prod -Dlog4j.configurationFile=classpath:log4j2.xml"
+```
+
+<Note>
+  운영 환경의 HTTP 포트는 Tomcat `server.xml`에서 설정합니다. 개발 Cargo 기본값은 **9071**이며, 일부 문서·환경에서는 **8071**을 사용하기도 합니다.
+</Note>
+
+---
+
+## 4. audigate.conf 설정
+
+설정 파일 경로 (우선순위):
+
+1. `${catalina.home}/conf/audigate.conf`
+2. `{작업 디렉터리}/deploy/conf/audigate.conf`
+
+`audigate.conf.example`을 복사하여 수정합니다.
+
+```yaml
+# deploy/conf/audigate.conf
+
+companyName: My-Company
+defaultLang: ko
+sValue: CHANGE_ME_RANDOM_KEY_SEED    # 암호화 시드 — 운영 시 반드시 변경
+
+elasticServer:
+  url: 192.168.0.32                  # ES 호스트 IP 또는 FQDN
+  port: 9200
+  username: elastic
+  password: CHANGE_ME                # ES elastic 사용자 비밀번호
+  protocol: https                    # http 또는 https
+  trustAllCertificates: true         # 자체서명 인증서 허용 (개발용, 운영 시 false 권장)
+```
+
+| 속성 | 설명 |
+| --- | --- |
+| `companyName` | 웹 콘솔에 표시되는 조직명 |
+| `defaultLang` | 기본 UI 언어 (`ko`, `en`) |
+| `sValue` | 내부 암호화 시드 키 (랜덤 문자열로 변경) |
+| `elasticServer.url` | Elasticsearch 호스트 |
+| `elasticServer.port` | ES HTTP 포트 (기본 9200) |
+| `elasticServer.protocol` | `http` 또는 `https` |
+| `elasticServer.trustAllCertificates` | 자체서명 SSL 허용 여부 |
+
+<Warning>
+  `sValue`와 ES 비밀번호는 운영 배포 전 반드시 변경하세요. 설정 파일은 적절한 파일 권한(예: `chmod 600`)으로 보호합니다.
+</Warning>
+
+---
+
+## 5. 웹 초기 설정
+
+Server 최초 기동 시 `audigate.conf`가 없거나 ES 사용자 인덱스가 비어 있으면 **설치 마법사**(`/install.html`)가 표시됩니다.
+
+<Steps>
+  <Step title="웹 콘솔 접속">
+    `http://<server-host>:<port>/` 에 접속합니다.
+  </Step>
+  <Step title="Elasticsearch 연결 테스트">
+    ES 호스트·포트·프로토콜·인증 정보를 입력하고 **연결 테스트**를 실행합니다.
+  </Step>
+  <Step title="관리자 계정 생성">
+    회사명·기본 언어·관리자 ID·비밀번호를 입력합니다.
+  </Step>
+  <Step title="설정 저장">
+    저장 시 다음이 자동 수행됩니다.
+    - `audigate.conf` 파일 생성
+    - ES 인덱스·템플릿 초기화
+    - 관리자 사용자 ES 등록
+  </Step>
+</Steps>
+
+<Check>
+  관리자 계정으로 로그인되면 웹 초기 설정이 완료된 것입니다.
+</Check>
+
+---
+
+## 6. DB 서비스 등록 (Broker 연동)
+
+Broker SQL 설치가 완료된 Oracle 인스턴스를 Server에 등록합니다.
+
+**관리 콘솔 → MANAGER → 디비 서비스 관리자**
+
+| 항목 | 입력 예시 |
+| --- | --- |
+| DB 서비스명 | `PROD-ORCL` |
+| 연결 URL (SID) | `192.168.0.10:1521:ORCL` |
+| 연결 URL (SERVICE_NAME) | `192.168.0.10:1521/PDB1` |
+| Broker 스키마 | `AG$BROKER01` |
+| Broker 비밀번호 | (설치 시 설정한 비밀번호) |
+
+등록 후 **연결 검증**을 실행합니다. Server는 Oracle 에디션(EE/SE)을 자동 감지하여 Broker 권한을 확인합니다.
+
+<Warning>
+  연결 검증 실패 시 `CREATE_AUDIGATE_BROKER.sql`(또는 SE 버전)이 대상 PDB에서 정상 완료되었는지, Broker 계정·비밀번호가 올바른지 확인하세요.
+</Warning>
+
+### 설치 후 권장 설정
+
+| 메뉴 | 작업 |
+| --- | --- |
+| **디비 서비스 관리자** | 대상 Oracle 인스턴스 등록·검증 |
+| **콘솔 사용자 관리자** | 웹 콘솔 계정·권한 설정 |
+| **Audit Builder** | 대상 테이블 `OBJECT AUDIT` 정책 배포 |
+| **DB 사용자 및 결재선 관리자** | Gate 사용자·승인선 등록 |
+| **게이트 롤 매니저** | AP-Role 승인·상태 관리 |
+
+---
+
+## 설치 확인 체크리스트
+
+| # | 확인 항목 | 방법 |
+| --- | --- | --- |
+| 1 | Elasticsearch 기동 | `curl`로 9200 응답 확인 |
+| 2 | Broker 스키마 | `AP_ROLE_UTIL` 패키지 `VALID` |
+| 3 | Server 기동 | 웹 콘솔 로그인 화면 표시 |
+| 4 | audigate.conf | ES 연결 정보 저장됨 |
+| 5 | 웹 초기 설정 | 관리자 로그인 성공 |
+| 6 | DB 서비스 연결 | 디비 서비스 관리자에서 검증 통과 |
+| 7 | 감사 수집 | 감사 라이브 대시보드에 데이터 유입 (AUD$ 정책 배포 후) |
+
+---
+
+## 문제 해결
+
+| 증상 | 원인 | 조치 |
+| --- | --- | --- |
+| ES 연결 실패 | 호스트·포트·인증 오류 | `audigate.conf` 값 확인, ES 방화벽(9200) 개방 |
+| Broker 검증 실패 | 스크립트 미실행 또는 PDB 오류 | PDB에서 Broker SQL 재실행, `CDB$ROOT` 아닌지 확인 |
+| 404 / 빈 화면 | WAR 미배포 또는 포트 불일치 | `webapps/` WAR 존재, Tomcat 포트 확인 |
+| 감사 로그 없음 | AUDIT 정책 미배포 | Audit Builder에서 대상 오브젝트 정책 생성 |
+| `apply_my_roles` 실패 | IP/OS 불일치, authKey 만료 | Client에서 현재 IP 확인 후 요청 IP 갱신 |
+
+<CardGroup cols={2}>
+  <Card title="Java Agent 설치" icon="code" href="/guides/java-agent-installation">
+    WAS에 Agent를 부착하여 실사용자 DB 감사 귀속을 설정하세요.
+  </Card>
+  <Card title="Client 설치" icon="desktop" href="/guides/client-installation">
+    데스크톱 Client 설치 및 Server REST API 연동을 설정하세요.
+  </Card>
+</CardGroup>
