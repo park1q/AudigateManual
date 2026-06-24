@@ -5,3 +5,7 @@
 # Draft content
 drafts/
 *.draft.mdx
+
+# Pandoc PDF export (not part of Mintlify site)
+scripts/
+build/
