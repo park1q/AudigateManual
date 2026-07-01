@@ -29,6 +29,7 @@
         "group": "사용자 가이드",
         "pages": [
           "guides/basic-usage",
+          "guides/ai-query",
           "guides/dashboard",
           "guides/reports"
         ]

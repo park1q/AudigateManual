@@ -43,6 +43,49 @@ icon: "gear"
 - 세션 타임아웃 (분 단위)
 - IP 허용 목록 (선택)
 
+## AI 질의 LLM (로컬 LLM)
+
+감사 로그 **AI 질의**는 질문 해석·요약에 **로컬 LLM**(Ollama 등)을 사용할 수 있습니다. 데이터 조회는 Elasticsearch가 담당하며, LLM은 구조화된 조건(JSON) 추출과 결과 요약에만 사용됩니다.
+
+설정 파일: 서버의 `audigate.conf` → `nlLlm` 섹션
+
+| 항목 | 설명 | 기본값 예 |
+| --- | --- | --- |
+| **enabled** | LLM 사용 여부. `false`이면 규칙 파서만 동작 | `true` |
+| **endpoint** | Ollama HTTP API 주소 | `http://127.0.0.1:11534` |
+| **model** | 사용할 모델 이름 | `llama3.2:3b` |
+| **timeoutMs** | LLM 호출 타임아웃(밀리초) | `30000` |
+
+```yaml
+nlLlm:
+  enabled: true
+  endpoint: http://127.0.0.1:11534
+  model: llama3.2:3b
+  timeoutMs: 30000
+```
+
+**parameters** 테이블(또는 동등 설정)에서 조정 가능한 항목:
+
+| 파라미터 | 설명 |
+| --- | --- |
+| `nl.bulk_access.threshold` | 「대량 조회」 질의의 최소 건수 임계값 (기본 10000) |
+
+<Steps>
+  <Step title="Ollama 설치·기동">
+    폐쇄망이면 설치 패키지·모델 파일을 오프라인 반입합니다. PoC용으로 3B~7B Q4 양자화 모델을 권장합니다.
+  </Step>
+  <Step title="audigate.conf 반영">
+    `nlLlm` 섹션에 endpoint·model을 맞춥니다. 설정 변경 후 Tomcat(서버) 재기동이 필요할 수 있습니다.
+  </Step>
+  <Step title="콘솔에서 확인">
+    **감사 → 감사 로그 분석 → AI 질의** 탭 상단 배지가 **로컬 LLM 연결됨**인지 확인합니다.
+  </Step>
+</Steps>
+
+<Warning>
+  LLM에는 raw SQL·대량 감사 이벤트·복호화된 사용자 목록을 전달하지 않습니다. LLM 출력도 검증 후에만 ES 집계가 실행됩니다.
+</Warning>
+
 <Note>
   보안 정책 변경은 모든 사용자에게 즉시 적용될 수 있습니다. 변경 전 영향 범위를 검토하세요.
 </Note>
